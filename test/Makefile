@@ -23,7 +23,7 @@ generate_coverage_report:
 	gcov tests-$(SRC_FILE_PREFIX) && \
 	lcov --capture --directory . --output-file $(SRC_FILE_PREFIX).c.info && \
 	genhtml $(SRC_FILE_PREFIX).c.info --output-directory coverage && \
-	rm *.gcno *.gcda *.gcov *.c.info
+	rm -rf *.gcno *.gcda *.gcov *.c.info
 
 all: build test memtest generate_coverage_report
 
