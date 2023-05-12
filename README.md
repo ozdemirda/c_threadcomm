@@ -28,35 +28,35 @@ following code snippet:
 
 
 int main() {
-	int retval;
+    int retval;
 
-	circular_queue* cq = circular_queue_create(1);
-	char * m1 = (char*) malloc(2*sizeof(char));
-	assert(cq && m1);
+    circular_queue* cq = circular_queue_create(1);
+    char * m1 = (char*) malloc(2*sizeof(char));
+    assert(cq && m1);
 
-	m1[0] = 'A';
-	m1[1] = '\0';
+    m1[0] = 'A';
+    m1[1] = '\0';
 
-	retval = circq_send_zc(cq, (void**)&m1, 2);	// The ownership of the
-											    // message is now lost.
-											    // m1 is NULL (assuming
-											    // the call to sendto_cq
-											    // a success).
-	assert(retval == 2);
+    retval = circq_send_zc(cq, (void**)&m1, 2); // The ownership of the
+                                                // message is now lost.
+                                                // m1 is NULL (assuming
+                                                // the call to sendto_cq
+                                                // a success).
+    assert(retval == 2);
 
-	char* m2 = NULL;
-	retval = circq_recv_zc(cq, (void**)&m2);	// And regained here via
-											    // the call recvfrom_cq
-											    // stored in m2.
+    char* m2 = NULL;
+    retval = circq_recv_zc(cq, (void**)&m2);    // And regained here via
+                                                // the call recvfrom_cq
+                                                // stored in m2.
 
-	assert(retval == 2);
-	assert(m2[0] == 'A');
-	assert(m2[1] == '\0');
+    assert(retval == 2);
+    assert(m2[0] == 'A');
+    assert(m2[1] == '\0');
 
-	free(m2); // Not m1, as it became NULL in sendto_cq()
+    free(m2); // Not m1, as it became NULL in sendto_cq()
 
-	circular_queue_destroy(cq);
+    circular_queue_destroy(cq);
 
-	return 0;
+    return 0;
 }
 ```
