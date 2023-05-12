@@ -1,0 +1,9 @@
+.vscode/
+*.so
+obj/
+test/tests
+test/coverage/
+*.gcno
+*.gcda
+*.gcov
+*.c.info
