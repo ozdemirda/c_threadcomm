@@ -44,6 +44,16 @@ void add_duration_to_timespec(struct timespec* target,
                               struct timespec* duration) {
   static const long int max_nsecs = 1000000000;
 
+  if (target->tv_nsec > max_nsecs) {
+    target->tv_sec += target->tv_nsec / max_nsecs;
+    target->tv_nsec = target->tv_nsec % max_nsecs;
+  }
+
+  if (duration->tv_nsec > max_nsecs) {
+    duration->tv_sec += duration->tv_nsec / max_nsecs;
+    duration->tv_nsec = duration->tv_nsec % max_nsecs;
+  }
+
   target->tv_sec += duration->tv_sec;
 
   long int gap = max_nsecs - target->tv_nsec;
