@@ -30,7 +30,7 @@ following code snippet:
 int main() {
     int retval;
 
-    circular_queue* cq = circular_queue_create(1);
+    circular_queue* cq = circular_queue_create(1, NULL);
     char * m1 = (char*) malloc(2*sizeof(char));
     assert(cq && m1);
 
