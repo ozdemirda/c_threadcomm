@@ -112,26 +112,34 @@ TEST(add_duration_to_timespec, edge_cases) {
 // CIRCULAR_QUEUE TESTS
 
 TEST(circular_queues, create_fails) {
-  circular_queue* cq = circular_queue_create(0);
-  REQUIRE_EQ((void*)cq, NULL);
+  char* err_str = NULL;
 
-  cq = circular_queue_create(-1);
+  circular_queue* cq = circular_queue_create(0, &err_str);
   REQUIRE_EQ((void*)cq, NULL);
+  REQUIRE_NE((void*)err_str, NULL);
 
-  cq = circular_queue_create((uint32_t)INT32_MAX + 1);
+  cq = circular_queue_create(-1, &err_str);
   REQUIRE_EQ((void*)cq, NULL);
+  REQUIRE_NE((void*)err_str, NULL);
+
+  cq = circular_queue_create((uint32_t)INT32_MAX + 1, &err_str);
+  REQUIRE_EQ((void*)cq, NULL);
+  REQUIRE_NE((void*)err_str, NULL);
 }
 
 TEST(circular_queues, create_and_destroy) {
-  circular_queue* cq = circular_queue_create(1);
+  char* err_str = "";
+
+  circular_queue* cq = circular_queue_create(1, &err_str);
   REQUIRE_NE((void*)cq, NULL);
+  REQUIRE_EQ((void*)err_str, NULL);
 
   circular_queue_destroy(cq);
   REQUIRE_EQ((void*)cq, NULL);
 }
 
 TEST(circular_queues, basic_send_and_receive) {
-  circular_queue* cq = circular_queue_create(1);
+  circular_queue* cq = circular_queue_create(1, NULL);
 
   char* m1 = (char*)malloc(16 * sizeof(char));
   m1[0] = 'A';
@@ -152,7 +160,7 @@ TEST(circular_queues, basic_send_and_receive) {
 }
 
 TEST(circular_queues, msg_count) {
-  circular_queue* cq = circular_queue_create(3);
+  circular_queue* cq = circular_queue_create(3, NULL);
 
   char* m1 = NULL;
 
@@ -172,7 +180,7 @@ TEST(circular_queues, msg_count) {
 }
 
 TEST(circular_queues, basic_send_and_receive_NULL_msg) {
-  circular_queue* cq = circular_queue_create(3);
+  circular_queue* cq = circular_queue_create(3, NULL);
 
   char* m1 = NULL;
   REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 0), 0);
@@ -182,7 +190,7 @@ TEST(circular_queues, basic_send_and_receive_NULL_msg) {
   REQUIRE_EQ(m1, NULL);
 
   m1 = (char*)malloc(sizeof(char));
-  REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 0), -1);
+  REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 0), ctcom_invalid_arguments);
   REQUIRE_NE(m1, NULL);
   free(m1);
   m1 = NULL;
@@ -198,7 +206,7 @@ TEST(circular_queues, basic_send_and_receive_NULL_msg) {
 }
 
 TEST(circular_queues, try_send_and_try_receive) {
-  circular_queue* cq = circular_queue_create(1);
+  circular_queue* cq = circular_queue_create(1, NULL);
 
   char* m1 = (char*)malloc(16 * sizeof(char));
   m1[0] = 'A';
@@ -208,7 +216,7 @@ TEST(circular_queues, try_send_and_try_receive) {
   REQUIRE_EQ(m1, NULL);
 
   m1 = (char*)malloc(sizeof(char));
-  REQUIRE_EQ(circq_try_send_zc(cq, (void**)&m1, 1), -1);
+  REQUIRE_EQ(circq_try_send_zc(cq, (void**)&m1, 1), ctcom_container_full);
   REQUIRE_NE(m1, NULL);
   free(m1);
   m1 = NULL;
@@ -219,7 +227,7 @@ TEST(circular_queues, try_send_and_try_receive) {
   REQUIRE_EQ(m2[0], 'A');
   REQUIRE_EQ(m2[1], '\0');
 
-  REQUIRE_EQ(circq_try_recv_zc(cq, (void**)&m1), -1);
+  REQUIRE_EQ(circq_try_recv_zc(cq, (void**)&m1), ctcom_container_empty);
   REQUIRE_EQ(m1, NULL);
 
   free(m2);
@@ -231,7 +239,7 @@ TEST(circular_queues, try_send_and_try_receive) {
   (B.tv_sec - A.tv_sec) * 1000000 + (B.tv_nsec - A.tv_nsec) / 1000
 
 TEST(circular_queues, timed_send_and_timed_receive) {
-  circular_queue* cq = circular_queue_create(1);
+  circular_queue* cq = circular_queue_create(1, NULL);
 
   char* m1 = (char*)malloc(16 * sizeof(char));
   m1[0] = 'A';
@@ -252,7 +260,8 @@ TEST(circular_queues, timed_send_and_timed_receive) {
 
   m1 = (char*)malloc(sizeof(char));
   getWallTime(before);
-  REQUIRE_EQ(circq_timed_send_zc(cq, (void**)&m1, 16, &timeout), -1);
+  REQUIRE_EQ(circq_timed_send_zc(cq, (void**)&m1, 16, &timeout),
+             ctcom_timedout);
   getWallTime(after);
   REQUIRE_GE(diffTimeUSec(before, after), 100000);
   REQUIRE_NE(m1, NULL);
@@ -270,7 +279,7 @@ TEST(circular_queues, timed_send_and_timed_receive) {
   REQUIRE_EQ(m2[1], '\0');
 
   getWallTime(before);
-  REQUIRE_EQ(circq_timed_recv_zc(cq, (void**)&m1, &timeout), -1);
+  REQUIRE_EQ(circq_timed_recv_zc(cq, (void**)&m1, &timeout), ctcom_timedout);
   getWallTime(after);
   REQUIRE_GE(diffTimeUSec(before, after), 100000);
   REQUIRE_EQ(m1, NULL);
@@ -280,7 +289,7 @@ TEST(circular_queues, timed_send_and_timed_receive) {
 }
 
 TEST(circular_queues, enable_disable_sending) {
-  circular_queue* cq = circular_queue_create(1);
+  circular_queue* cq = circular_queue_create(1, NULL);
 
   char* m1 = (char*)malloc(16 * sizeof(char));
   m1[0] = 'A';
@@ -288,15 +297,15 @@ TEST(circular_queues, enable_disable_sending) {
 
   circq_disable_sending(cq);
 
-  REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 16), -1);
+  REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 16), ctcom_writing_disabled);
   REQUIRE_NE(m1, NULL);
 
-  REQUIRE_EQ(circq_try_send_zc(cq, (void**)&m1, 16), -1);
+  REQUIRE_EQ(circq_try_send_zc(cq, (void**)&m1, 16), ctcom_writing_disabled);
   REQUIRE_NE(m1, NULL);
 
   REQUIRE_EQ(circq_timed_send_zc(cq, (void**)&m1, 16,
                                  &(struct timespec){.tv_sec = 1, .tv_nsec = 0}),
-             -1);
+             ctcom_writing_disabled);
   REQUIRE_NE(m1, NULL);
 
   circq_enable_sending(cq);
@@ -337,7 +346,7 @@ void* cq_helper_thread(void* args) {
 }
 
 TEST(circular_queues, send_and_receive_thread) {
-  circular_queue* cq = circular_queue_create(1);
+  circular_queue* cq = circular_queue_create(1, NULL);
 
   pthread_t tid;
   pthread_create(&tid, NULL, cq_helper_thread, cq);
@@ -364,15 +373,18 @@ TEST(circular_queues, send_and_receive_thread) {
 // DYNAMIC_QUEUE TESTS
 
 TEST(dynamic_queues, create_and_destroy) {
-  dynamic_queue* dq = dynamic_queue_create();
+  char* err_str = "";
+
+  dynamic_queue* dq = dynamic_queue_create(&err_str);
   REQUIRE_NE((void*)dq, NULL);
+  REQUIRE_EQ((void*)err_str, NULL);
 
   dynamic_queue_destroy(dq);
   REQUIRE_EQ((void*)dq, NULL);
 }
 
 TEST(dynamic_queues, basic_send_and_receive) {
-  dynamic_queue* dq = dynamic_queue_create();
+  dynamic_queue* dq = dynamic_queue_create(NULL);
 
   char* m1 = (char*)malloc(16 * sizeof(char));
   m1[0] = 'A';
@@ -393,7 +405,7 @@ TEST(dynamic_queues, basic_send_and_receive) {
 }
 
 TEST(dynamic_queues, msg_count) {
-  dynamic_queue* dq = dynamic_queue_create();
+  dynamic_queue* dq = dynamic_queue_create(NULL);
 
   char* m1 = NULL;
 
@@ -413,7 +425,7 @@ TEST(dynamic_queues, msg_count) {
 }
 
 TEST(dynamic_queues, destroy_queue_with_items_in_it) {
-  dynamic_queue* dq = dynamic_queue_create();
+  dynamic_queue* dq = dynamic_queue_create(NULL);
 
   char* m1 = NULL;
 
@@ -428,7 +440,7 @@ TEST(dynamic_queues, destroy_queue_with_items_in_it) {
 }
 
 TEST(dynamic_queues, basic_send_and_receive_NULL_msg) {
-  dynamic_queue* dq = dynamic_queue_create();
+  dynamic_queue* dq = dynamic_queue_create(NULL);
 
   char* m1 = NULL;
   REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 0), 0);
@@ -438,7 +450,7 @@ TEST(dynamic_queues, basic_send_and_receive_NULL_msg) {
   REQUIRE_EQ(m1, NULL);
 
   m1 = (char*)malloc(sizeof(char));
-  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 0), -1);
+  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 0), ctcom_invalid_arguments);
   REQUIRE_NE(m1, NULL);
   free(m1);
   m1 = NULL;
@@ -460,7 +472,7 @@ TEST(dynamic_queues, basic_send_and_receive_NULL_msg) {
 }
 
 TEST(dynamic_queues, send_and_try_receive) {
-  dynamic_queue* dq = dynamic_queue_create();
+  dynamic_queue* dq = dynamic_queue_create(NULL);
 
   char* m1 = (char*)malloc(16 * sizeof(char));
   m1[0] = 'A';
@@ -475,7 +487,7 @@ TEST(dynamic_queues, send_and_try_receive) {
   REQUIRE_EQ(m2[0], 'A');
   REQUIRE_EQ(m2[1], '\0');
 
-  REQUIRE_EQ(dynmq_try_recv_zc(dq, (void**)&m1), -1);
+  REQUIRE_EQ(dynmq_try_recv_zc(dq, (void**)&m1), ctcom_container_empty);
   REQUIRE_EQ(m1, NULL);
 
   free(m2);
@@ -483,7 +495,7 @@ TEST(dynamic_queues, send_and_try_receive) {
 }
 
 TEST(dynamic_queues, send_and_timed_receive) {
-  dynamic_queue* dq = dynamic_queue_create();
+  dynamic_queue* dq = dynamic_queue_create(NULL);
 
   char* m1 = (char*)malloc(16 * sizeof(char));
   m1[0] = 'A';
@@ -509,7 +521,7 @@ TEST(dynamic_queues, send_and_timed_receive) {
   REQUIRE_EQ(m2[1], '\0');
 
   getWallTime(before);
-  REQUIRE_EQ(dynmq_timed_recv_zc(dq, (void**)&m1, &timeout), -1);
+  REQUIRE_EQ(dynmq_timed_recv_zc(dq, (void**)&m1, &timeout), ctcom_timedout);
   getWallTime(after);
   REQUIRE_GE(diffTimeUSec(before, after), 100000);
   REQUIRE_EQ(m1, NULL);
@@ -519,7 +531,7 @@ TEST(dynamic_queues, send_and_timed_receive) {
 }
 
 TEST(dynamic_queues, enable_disable_sending) {
-  dynamic_queue* dq = dynamic_queue_create();
+  dynamic_queue* dq = dynamic_queue_create(NULL);
 
   char* m1 = (char*)malloc(16 * sizeof(char));
   m1[0] = 'A';
@@ -527,7 +539,7 @@ TEST(dynamic_queues, enable_disable_sending) {
 
   dynmq_disable_sending(dq);
 
-  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 16), -1);
+  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 16), ctcom_writing_disabled);
   REQUIRE_NE(m1, NULL);
 
   dynmq_enable_sending(dq);
@@ -560,7 +572,7 @@ void* dq_helper_thread(void* args) {
 }
 
 TEST(dynamic_queues, send_and_receive_thread) {
-  dynamic_queue* dq = dynamic_queue_create();
+  dynamic_queue* dq = dynamic_queue_create(NULL);
 
   pthread_t tid;
   pthread_create(&tid, NULL, dq_helper_thread, dq);
@@ -582,19 +594,27 @@ TEST(dynamic_queues, send_and_receive_thread) {
 // CHANNEL TESTS
 
 TEST(channels, create_fails) {
-  channel* ch = channel_create(0);
-  REQUIRE_EQ((void*)ch, NULL);
+  char* err_str = NULL;
 
-  ch = channel_create(-1);
+  channel* ch = channel_create(0, &err_str);
   REQUIRE_EQ((void*)ch, NULL);
+  REQUIRE_NE((void*)err_str, NULL);
 
-  ch = channel_create((uint32_t)INT32_MAX + 1);
+  ch = channel_create(-1, &err_str);
   REQUIRE_EQ((void*)ch, NULL);
+  REQUIRE_NE((void*)err_str, NULL);
+
+  ch = channel_create((uint32_t)INT32_MAX + 1, &err_str);
+  REQUIRE_EQ((void*)ch, NULL);
+  REQUIRE_NE((void*)err_str, NULL);
 }
 
 TEST(channels, create_and_destroy) {
-  channel* ch = channel_create(1);
+  char* err_str = "";
+
+  channel* ch = channel_create(1, &err_str);
   REQUIRE_NE((void*)ch, NULL);
+  REQUIRE_EQ((void*)err_str, NULL);
 
   channel_destroy(ch);
   REQUIRE_EQ((void*)ch, NULL);
@@ -620,7 +640,7 @@ void* thr_for_channels_basic_send_and_receive(void* args) {
 }
 
 TEST(channels, basic_send_and_receive) {
-  channel* ch = channel_create(1);
+  channel* ch = channel_create(1, NULL);
 
   pthread_t tid;
   pthread_create(&tid, NULL, thr_for_channels_basic_send_and_receive, ch);
@@ -662,7 +682,7 @@ void* thr_for_channels_msg_count(void* args) {
 }
 
 TEST(channels, msg_count) {
-  channel* ch = channel_create(3);
+  channel* ch = channel_create(3, NULL);
 
   char* m1 = NULL;
 
@@ -700,14 +720,14 @@ void* thr_for_channels_try_send_and_try_receive(void* args) {
   *msg = 'B';
 
   char* m2 = NULL;
-  assert(chan_try_recv_zc(ch, (void**)&m2) == -1);
+  assert(chan_try_recv_zc(ch, (void**)&m2) == ctcom_container_empty);
   assert(m2 == NULL);
 
   assert(chan_try_send_zc(ch, (void**)&msg, 1) == 1);
   assert(msg == NULL);
 
   m2 = (char*)malloc(sizeof(char));
-  assert(chan_try_send_zc(ch, (void**)&m2, 1) == -1);
+  assert(chan_try_send_zc(ch, (void**)&m2, 1) == ctcom_container_full);
   assert(m2 != NULL);
   free(m2);
 
@@ -715,7 +735,7 @@ void* thr_for_channels_try_send_and_try_receive(void* args) {
 }
 
 TEST(channels, try_send_and_try_receive) {
-  channel* ch = channel_create(1);
+  channel* ch = channel_create(1, NULL);
 
   pthread_t tid;
   pthread_create(&tid, NULL, thr_for_channels_try_send_and_try_receive, ch);
@@ -726,7 +746,7 @@ TEST(channels, try_send_and_try_receive) {
   REQUIRE_EQ(m1, NULL);
 
   m1 = (char*)malloc(sizeof(char));
-  REQUIRE_EQ(chan_try_send_zc(ch, (void**)&m1, 1), -1);
+  REQUIRE_EQ(chan_try_send_zc(ch, (void**)&m1, 1), ctcom_container_full);
   REQUIRE_NE(m1, NULL);
   free(m1);
   m1 = NULL;
@@ -738,7 +758,7 @@ TEST(channels, try_send_and_try_receive) {
   REQUIRE_NE(m2, NULL);
   REQUIRE_EQ(*m2, 'B');
 
-  REQUIRE_EQ(chan_try_recv_zc(ch, (void**)&m1), -1);
+  REQUIRE_EQ(chan_try_recv_zc(ch, (void**)&m1), ctcom_container_empty);
   REQUIRE_EQ(m1, NULL);
 
   free(m2);
@@ -770,7 +790,7 @@ void* thr_for_channels_timed_send_and_timed_receive(void* args) {
 
   char* m2 = NULL;
   getWallTime(before);
-  assert(chan_timed_recv_zc(ch, (void**)&m2, &timeout) == -1);
+  assert(chan_timed_recv_zc(ch, (void**)&m2, &timeout) == ctcom_timedout);
   getWallTime(after);
   assert(diffTimeUSec(before, after) >= 10000);
   assert(m2 == NULL);
@@ -783,7 +803,7 @@ void* thr_for_channels_timed_send_and_timed_receive(void* args) {
 
   m2 = (char*)malloc(sizeof(char));
   getWallTime(before);
-  assert(chan_timed_send_zc(ch, (void**)&m2, 1, &timeout) == -1);
+  assert(chan_timed_send_zc(ch, (void**)&m2, 1, &timeout) == ctcom_timedout);
   getWallTime(after);
   assert(diffTimeUSec(before, after) >= 10000);
   assert(m2 != NULL);
@@ -793,7 +813,7 @@ void* thr_for_channels_timed_send_and_timed_receive(void* args) {
 }
 
 TEST(channels, timed_send_and_timed_receive) {
-  channel* ch = channel_create(1);
+  channel* ch = channel_create(1, NULL);
 
   pthread_t tid;
   pthread_create(&tid, NULL, thr_for_channels_timed_send_and_timed_receive, ch);
@@ -816,7 +836,7 @@ TEST(channels, timed_send_and_timed_receive) {
 
   m1 = (char*)malloc(sizeof(char));
   getWallTime(before);
-  REQUIRE_EQ(chan_timed_send_zc(ch, (void**)&m1, 1, &timeout), -1);
+  REQUIRE_EQ(chan_timed_send_zc(ch, (void**)&m1, 1, &timeout), ctcom_timedout);
   getWallTime(after);
   REQUIRE_GE(diffTimeUSec(before, after), 10000);
   REQUIRE_NE(m1, NULL);
@@ -834,7 +854,7 @@ TEST(channels, timed_send_and_timed_receive) {
   REQUIRE_EQ(*m2, 'B');
 
   getWallTime(before);
-  REQUIRE_EQ(chan_timed_recv_zc(ch, (void**)&m1, &timeout), -1);
+  REQUIRE_EQ(chan_timed_recv_zc(ch, (void**)&m1, &timeout), ctcom_timedout);
   getWallTime(after);
   REQUIRE_GE(diffTimeUSec(before, after), 10000);
   REQUIRE_EQ(m1, NULL);
@@ -854,7 +874,7 @@ void* thr_for_enable_disable_sending(void* args) {
   *msg = 'B';
 
   chan_disable_sending(ch, workers_to_owner);
-  assert(chan_send_zc(ch, (void**)&msg, 1) == -1);
+  assert(chan_send_zc(ch, (void**)&msg, 1) == ctcom_writing_disabled);
   assert(msg != NULL);
 
   chan_enable_sending(ch, workers_to_owner);
@@ -865,7 +885,7 @@ void* thr_for_enable_disable_sending(void* args) {
 }
 
 TEST(channels, enable_disable_sending) {
-  channel* ch = channel_create(1);
+  channel* ch = channel_create(1, NULL);
 
   pthread_t tid;
   pthread_create(&tid, NULL, thr_for_enable_disable_sending, ch);
@@ -875,7 +895,7 @@ TEST(channels, enable_disable_sending) {
 
   chan_disable_sending(ch, owner_to_workers);
 
-  REQUIRE_EQ(chan_send_zc(ch, (void**)&m1, 1), -1);
+  REQUIRE_EQ(chan_send_zc(ch, (void**)&m1, 1), ctcom_writing_disabled);
   REQUIRE_NE(m1, NULL);
 
   chan_enable_sending(ch, owner_to_workers);

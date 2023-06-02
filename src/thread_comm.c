@@ -24,10 +24,31 @@ SOFTWARE.
 
 #include <thread_comm.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <pthread.h>
 #include <errno.h>
 #include <time.h>
+
+#define mem_alloc(size) malloc(size)
+#define mem_calloc(elem_count, elem_size) calloc(elem_count, elem_size)
+#define mem_realloc(ptr, new_size) realloc(ptr, new_size)
+#define mem_free(ptr) free(ptr)
+
+#define mutex_t pthread_mutex_t
+#define mutex_destroy(m) pthread_mutex_destroy(m)
+#define mutex_init(m, a) pthread_mutex_init(m, a)
+#define mutex_lock(m) pthread_mutex_lock(m)
+#define mutex_unlock(m) pthread_mutex_unlock(m)
+
+#define cond_var_t pthread_cond_t
+#define cond_var_destroy(c) pthread_cond_destroy(c)
+#define cond_var_init(c, a) pthread_cond_init(c, a)
+#define cond_var_wait(c, m) pthread_cond_wait(c, m)
+#define cond_var_timedwait(c, m, t) pthread_cond_timedwait(c, m, t)
+#define cond_var_signal(c) pthread_cond_signal(c)
+
+#define stringify(s) #s
+#define x_stringify(s) stringify(s)
+#define CERR_STR(x) (__FILE__ ":" x_stringify(__LINE__) " - " x)
 
 #ifdef RUNNING_UNIT_TESTS
 #include <assert.h>
@@ -67,9 +88,9 @@ void add_duration_to_timespec(struct timespec* target,
 }
 
 struct circular_queue {
-  pthread_mutex_t mutex;
-  pthread_cond_t read_cond;
-  pthread_cond_t write_cond;
+  mutex_t mutex;
+  cond_var_t read_cond;
+  cond_var_t write_cond;
 
   uint32_t read_index;
   uint32_t write_index;
@@ -80,39 +101,50 @@ struct circular_queue {
   bool writing_disabled;
 };
 
-circular_queue* circular_queue_create(uint32_t max_size) {
+circular_queue* circular_queue_create(uint32_t max_size, char** err_str) {
   if (max_size == 0) {
-    fprintf(stderr, "max_size should be positive\n");
+    if (err_str) {
+      *err_str = CERR_STR("max_size should be positive");
+    }
     return NULL;
   }
 
   if (max_size > max_allowed_cq_size) {
-    fprintf(stderr, "max_size: %u - max_allowed_cq_size: %u\n", max_size,
-            max_allowed_cq_size);
+    if (err_str) {
+      *err_str = CERR_STR("max_size can not exceed max_allowed_cq_size");
+    }
     return NULL;
   }
 
-  circular_queue* cq = (circular_queue*)malloc(sizeof(circular_queue));
+  circular_queue* cq = (circular_queue*)mem_alloc(sizeof(circular_queue));
   if (!cq) {
-    fprintf(stderr, "Failed to allocate memory for circular_queue\n");
+    if (err_str) {
+      *err_str = CERR_STR("Failed to allocate memory for circular_queue");
+    }
     return NULL;
   }
 
-  cq->msg_array = (message*)malloc(max_size * sizeof(message));
+  cq->msg_array = (message*)mem_alloc(max_size * sizeof(message));
   if (!cq->msg_array) {
-    free(cq);
-    fprintf(stderr, "Failed to allocate memory for cq msg_array\n");
+    if (err_str) {
+      *err_str = CERR_STR("Failed to allocate memory for cq msg_array");
+    }
+    mem_free(cq);
     return NULL;
   }
 
-  pthread_mutex_init(&cq->mutex, NULL);
-  pthread_cond_init(&cq->read_cond, NULL);
-  pthread_cond_init(&cq->write_cond, NULL);
+  mutex_init(&cq->mutex, NULL);
+  cond_var_init(&cq->read_cond, NULL);
+  cond_var_init(&cq->write_cond, NULL);
   cq->read_index = 0;
   cq->write_index = 0;
   cq->max_size = max_size;
   cq->msg_count = 0;
   cq->writing_disabled = false;
+
+  if (err_str) {
+    *err_str = NULL;
+  }
 
   return cq;
 }
@@ -120,15 +152,15 @@ circular_queue* circular_queue_create(uint32_t max_size) {
 void __circular_queue_destroy(circular_queue* cq) {
   if (cq) {
     if (cq->msg_array) {
-      free(cq->msg_array);
+      mem_free(cq->msg_array);
       cq->msg_array = NULL;
     }
 
-    pthread_mutex_destroy(&cq->mutex);
-    pthread_cond_destroy(&cq->read_cond);
-    pthread_cond_destroy(&cq->write_cond);
+    mutex_destroy(&cq->mutex);
+    cond_var_destroy(&cq->read_cond);
+    cond_var_destroy(&cq->write_cond);
 
-    free(cq);
+    mem_free(cq);
   }
 }
 
@@ -146,69 +178,56 @@ int _sendto_cq(circular_queue* cq, void** msg, uint32_t msg_size) {
   }
   ++cq->msg_count;
 
-  pthread_cond_signal(&cq->read_cond);
+  cond_var_signal(&cq->read_cond);
 
   return msg_size;
 }
 
-int verify_circq_send_zc_params(circular_queue* cq, void** msg,
-                                uint32_t msg_size) {
-  if (!cq) {
-    fprintf(stderr, "verify_circq_send_zc_params - cq is NULL\n");
-    return -1;
+ctcomm_retval_t verify_circq_send_zc_params(circular_queue* cq, void** msg,
+                                            uint32_t msg_size) {
+  if (!cq || !msg || (msg_size == 0 && *msg != NULL)) {
+    return ctcom_invalid_arguments;
   }
 
-  if (!msg) {
-    fprintf(stderr, "verify_circq_send_zc_params - msg is NULL\n");
-    return -1;
-  }
-
-  if (msg_size == 0 && *msg != NULL) {
-    fprintf(
-        stderr,
-        "verify_circq_send_zc_params - msg_size is zero, msg is not NULL\n");
-    return -1;
-  }
-
-  return 0;
+  return ctcom_success;
 }
 
 int circq_send_zc(circular_queue* cq, void** msg, uint32_t msg_size) {
   if (verify_circq_send_zc_params(cq, msg, msg_size) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  pthread_mutex_lock(&cq->mutex);
+  mutex_lock(&cq->mutex);
 
   if (cq->writing_disabled) {
-    pthread_mutex_unlock(&cq->mutex);
-    return -1;
+    mutex_unlock(&cq->mutex);
+    return ctcom_writing_disabled;
   }
 
   while (cq->msg_count == cq->max_size) {
-    pthread_cond_wait(&cq->write_cond, &cq->mutex);
+    cond_var_wait(&cq->write_cond, &cq->mutex);
   }
 
   msg_size = _sendto_cq(cq, msg, msg_size);
 
-  pthread_mutex_unlock(&cq->mutex);
+  mutex_unlock(&cq->mutex);
 
   return msg_size;
 }
 
 int circq_try_send_zc(circular_queue* cq, void** msg, uint32_t msg_size) {
   if (verify_circq_send_zc_params(cq, msg, msg_size) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   // Assuming we won't have space for the new message.
-  int result = -1;
+  int result = ctcom_container_full;
 
-  pthread_mutex_lock(&cq->mutex);
+  mutex_lock(&cq->mutex);
 
   if (cq->writing_disabled) {
-    pthread_mutex_unlock(&cq->mutex);
-    return -1;
+    mutex_unlock(&cq->mutex);
+    return ctcom_writing_disabled;
   }
 
   if (cq->msg_count < cq->max_size) {
@@ -216,7 +235,7 @@ int circq_try_send_zc(circular_queue* cq, void** msg, uint32_t msg_size) {
     result = _sendto_cq(cq, msg, msg_size);
   }
 
-  pthread_mutex_unlock(&cq->mutex);
+  mutex_unlock(&cq->mutex);
 
   return result;
 }
@@ -224,14 +243,14 @@ int circq_try_send_zc(circular_queue* cq, void** msg, uint32_t msg_size) {
 int circq_timed_send_zc(circular_queue* cq, void** msg, uint32_t msg_size,
                         struct timespec* timeout_duration) {
   if (verify_circq_send_zc_params(cq, msg, msg_size) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  pthread_mutex_lock(&cq->mutex);
+  mutex_lock(&cq->mutex);
 
   if (cq->writing_disabled) {
-    pthread_mutex_unlock(&cq->mutex);
-    return -1;
+    mutex_unlock(&cq->mutex);
+    return ctcom_writing_disabled;
   }
 
   if (cq->msg_count == cq->max_size) {
@@ -241,28 +260,29 @@ int circq_timed_send_zc(circular_queue* cq, void** msg, uint32_t msg_size,
     add_duration_to_timespec(&abs_time, timeout_duration);
 
     while (cq->msg_count == cq->max_size) {
-      if ((retval = pthread_cond_timedwait(&cq->write_cond, &cq->mutex,
-                                           &abs_time)) != 0) {
+      if ((retval = cond_var_timedwait(&cq->write_cond, &cq->mutex,
+                                       &abs_time)) != 0) {
         if (retval != ETIMEDOUT) {
-          fprintf(stderr, "timed_sendto_cq failed, retval: %d\n", retval);
+          mutex_unlock(&cq->mutex);
+          return ctcom_unexpected_failure;
         }
-        pthread_mutex_unlock(&cq->mutex);
-        return -1;
+        mutex_unlock(&cq->mutex);
+        return ctcom_timedout;
       }
     }
   }
 
   msg_size = _sendto_cq(cq, msg, msg_size);
 
-  pthread_mutex_unlock(&cq->mutex);
+  mutex_unlock(&cq->mutex);
 
   return msg_size;
 }
 
 // This function should always be called while holding the mutex.
 // Please notice that it's not exposed to the caller via the header file.
-int _recvfrom_cq(circular_queue* cq, void** target_buf) {
-  int msg_size = cq->msg_array[cq->read_index].size;
+ctcomm_retval_t _recvfrom_cq(circular_queue* cq, void** target_buf) {
+  ctcomm_retval_t msg_size = cq->msg_array[cq->read_index].size;
   *target_buf = cq->msg_array[cq->read_index++].data;
   if (cq->read_index == cq->max_size) {
     cq->read_index = 0;
@@ -270,68 +290,62 @@ int _recvfrom_cq(circular_queue* cq, void** target_buf) {
 
   --cq->msg_count;
 
-  pthread_cond_signal(&cq->write_cond);
+  cond_var_signal(&cq->write_cond);
 
   return msg_size;
 }
 
 int verify_recvfrom_cq_zc_params(circular_queue* cq, void** target_buf) {
-  if (!cq) {
-    fprintf(stderr, "verify_recvfrom_cq_zc_params - cq is NULL\n");
-    return -1;
+  if (!cq || !target_buf) {
+    return ctcom_invalid_arguments;
   }
 
-  if (!target_buf) {
-    fprintf(stderr, "verify_recvfrom_cq_zc_params - target_buf is NULL\n");
-    return -1;
-  }
-
-  return 0;
+  return ctcom_success;
 }
 
-int circq_recv_zc(circular_queue* cq, void** target_buf) {
+ctcomm_retval_t circq_recv_zc(circular_queue* cq, void** target_buf) {
   if (verify_recvfrom_cq_zc_params(cq, target_buf) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  pthread_mutex_lock(&cq->mutex);
+  mutex_lock(&cq->mutex);
 
   while (cq->msg_count == 0) {
-    pthread_cond_wait(&cq->read_cond, &cq->mutex);
+    cond_var_wait(&cq->read_cond, &cq->mutex);
   }
 
-  int msg_size = _recvfrom_cq(cq, target_buf);
+  ctcomm_retval_t msg_size = _recvfrom_cq(cq, target_buf);
 
-  pthread_mutex_unlock(&cq->mutex);
+  mutex_unlock(&cq->mutex);
 
   return msg_size;
 }
 
-int circq_try_recv_zc(circular_queue* cq, void** target_buf) {
+ctcomm_retval_t circq_try_recv_zc(circular_queue* cq, void** target_buf) {
   if (verify_recvfrom_cq_zc_params(cq, target_buf) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  int result = -1;
+  ctcomm_retval_t result = ctcom_container_empty;
 
-  pthread_mutex_lock(&cq->mutex);
+  mutex_lock(&cq->mutex);
 
   if (cq->msg_count > 0) {
     result = _recvfrom_cq(cq, target_buf);
   }
 
-  pthread_mutex_unlock(&cq->mutex);
+  mutex_unlock(&cq->mutex);
 
   return result;
 }
 
-int circq_timed_recv_zc(circular_queue* cq, void** target_buf,
-                        struct timespec* timeout) {
+ctcomm_retval_t circq_timed_recv_zc(circular_queue* cq, void** target_buf,
+                                    struct timespec* timeout) {
   if (verify_recvfrom_cq_zc_params(cq, target_buf) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  pthread_mutex_lock(&cq->mutex);
+  mutex_lock(&cq->mutex);
 
   if (cq->msg_count == 0) {
     int retval;
@@ -340,51 +354,52 @@ int circq_timed_recv_zc(circular_queue* cq, void** target_buf,
     add_duration_to_timespec(&abs_time, timeout);
 
     while (cq->msg_count == 0) {
-      if ((retval = pthread_cond_timedwait(&cq->read_cond, &cq->mutex,
-                                           &abs_time)) != 0) {
+      if ((retval = cond_var_timedwait(&cq->read_cond, &cq->mutex,
+                                       &abs_time)) != 0) {
         if (retval != ETIMEDOUT) {
-          fprintf(stderr, "timed_recvfrom_cq failed, retval: %d\n", retval);
+          mutex_unlock(&cq->mutex);
+          return ctcom_unexpected_failure;
         }
-        pthread_mutex_unlock(&cq->mutex);
-        return -1;
+        mutex_unlock(&cq->mutex);
+        return ctcom_timedout;
       }
     }
   }
 
-  int msg_size = _recvfrom_cq(cq, target_buf);
+  ctcomm_retval_t msg_size = _recvfrom_cq(cq, target_buf);
 
-  pthread_mutex_unlock(&cq->mutex);
+  mutex_unlock(&cq->mutex);
 
   return msg_size;
 }
 
-void circq_disable_sending(circular_queue* cq) {
+ctcomm_retval_t circq_disable_sending(circular_queue* cq) {
   if (cq) {
-    pthread_mutex_lock(&cq->mutex);
+    mutex_lock(&cq->mutex);
     cq->writing_disabled = true;
-    pthread_mutex_unlock(&cq->mutex);
-  } else {
-    fprintf(stderr, "circq_disable_sending - cq is NULL\n");
+    mutex_unlock(&cq->mutex);
+    return ctcom_success;
   }
+  return ctcom_invalid_arguments;
 }
 
-void circq_enable_sending(circular_queue* cq) {
+ctcomm_retval_t circq_enable_sending(circular_queue* cq) {
   if (cq) {
-    pthread_mutex_lock(&cq->mutex);
+    mutex_lock(&cq->mutex);
     cq->writing_disabled = false;
-    pthread_mutex_unlock(&cq->mutex);
-  } else {
-    fprintf(stderr, "circq_disable_sending - cq is NULL\n");
+    mutex_unlock(&cq->mutex);
+    return ctcom_success;
   }
+  return ctcom_invalid_arguments;
 }
 
 int circq_msg_count(circular_queue* cq) {
   int result = -1;
 
   if (cq) {
-    pthread_mutex_lock(&cq->mutex);
+    mutex_lock(&cq->mutex);
     result = cq->msg_count;
-    pthread_mutex_unlock(&cq->mutex);
+    mutex_unlock(&cq->mutex);
   }
 
   return result;
@@ -398,8 +413,8 @@ typedef struct dllist_node {
 } dllist_node;
 
 struct dynamic_queue {
-  pthread_mutex_t mutex;
-  pthread_cond_t read_cond;
+  mutex_t mutex;
+  cond_var_t read_cond;
 
   uint32_t msg_count;
 
@@ -409,11 +424,11 @@ struct dynamic_queue {
   bool writing_disabled;
 };
 
-int append_msg_to_dq_tail(dynamic_queue* dq, void** data, uint32_t msg_size) {
-  dllist_node* new_elem = (dllist_node*)malloc(sizeof(dllist_node));
+ctcomm_retval_t append_msg_to_dq_tail(dynamic_queue* dq, void** data,
+                                      uint32_t msg_size) {
+  dllist_node* new_elem = (dllist_node*)mem_alloc(sizeof(dllist_node));
   if (!new_elem) {
-    fprintf(stderr, "Failed to allocate memory for new element\n");
-    return -1;
+    return ctcom_not_enough_memory;
   }
 
   if (*data == NULL) {
@@ -444,12 +459,13 @@ int append_msg_to_dq_tail(dynamic_queue* dq, void** data, uint32_t msg_size) {
   return msg_size;
 }
 
-int remove_msg_from_dq_head(dynamic_queue* dq, void** data_buf_ptr) {
+ctcomm_retval_t remove_msg_from_dq_head(dynamic_queue* dq,
+                                        void** data_buf_ptr) {
   if (!dq->head) {
 #ifdef RUNNING_UNIT_TESTS
     assert(!dq->tail);
 #endif
-    return -1;
+    return ctcom_container_empty;
   }
 
 #ifdef RUNNING_UNIT_TESTS
@@ -470,7 +486,7 @@ int remove_msg_from_dq_head(dynamic_queue* dq, void** data_buf_ptr) {
     dq->tail = NULL;
   }
 
-  free(node_to_be_freed);
+  mem_free(node_to_be_freed);
 
   return msg_size;
 }
@@ -480,43 +496,49 @@ void destroy_dq_dllist(dynamic_queue* dq) {
   while (dq->head) {
     node_to_be_freed = dq->head;
     dq->head = dq->head->next;
-    free(node_to_be_freed);
+    mem_free(node_to_be_freed);
   }
   dq->tail = NULL;
 }
 
-dynamic_queue* dynamic_queue_create() {
-  dynamic_queue* dq = (dynamic_queue*)malloc(sizeof(dynamic_queue));
+dynamic_queue* dynamic_queue_create(char** err_str) {
+  dynamic_queue* dq = (dynamic_queue*)mem_alloc(sizeof(dynamic_queue));
   if (!dq) {
-    fprintf(stderr, "Failed to allocate memory for dynamic queue\n");
+    if (err_str) {
+      *err_str = CERR_STR("Failed to allocate memory for dynamic queue");
+    }
     return NULL;
   }
 
-  pthread_mutex_init(&dq->mutex, NULL);
-  pthread_cond_init(&dq->read_cond, NULL);
+  mutex_init(&dq->mutex, NULL);
+  cond_var_init(&dq->read_cond, NULL);
   dq->msg_count = 0;
   dq->head = NULL;
   dq->tail = NULL;
   dq->writing_disabled = false;
+
+  if (err_str) {
+    *err_str = NULL;
+  }
 
   return dq;
 }
 
 void __dynamic_queue_destroy(dynamic_queue* dq) {
   if (dq) {
-    pthread_mutex_destroy(&dq->mutex);
-    pthread_cond_destroy(&dq->read_cond);
+    mutex_destroy(&dq->mutex);
+    cond_var_destroy(&dq->read_cond);
     destroy_dq_dllist(dq);
-    free(dq);
+    mem_free(dq);
   }
 }
 
-int _sendto_dq(dynamic_queue* dq, void** msg, uint32_t msg_size) {
-  int retval = append_msg_to_dq_tail(dq, msg, msg_size);
+ctcomm_retval_t _sendto_dq(dynamic_queue* dq, void** msg, uint32_t msg_size) {
+  ctcomm_retval_t retval = append_msg_to_dq_tail(dq, msg, msg_size);
 
-  if (retval != -1) {
+  if (retval != ctcom_not_enough_memory) {
     ++dq->msg_count;
-    pthread_cond_signal(&dq->read_cond);
+    cond_var_signal(&dq->read_cond);
   }
 
   return retval;
@@ -524,112 +546,95 @@ int _sendto_dq(dynamic_queue* dq, void** msg, uint32_t msg_size) {
 
 int verify_dynmq_send_zc_params(dynamic_queue* dq, void** msg,
                                 uint32_t msg_size) {
-  if (!dq) {
-    fprintf(stderr, "verify_circq_send_zc_params - cq is NULL\n");
-    return -1;
+  if (!dq || !msg || (msg_size == 0 && *msg != NULL)) {
+    return ctcom_invalid_arguments;
   }
 
-  if (!msg) {
-    fprintf(stderr, "verify_circq_send_zc_params - msg is NULL\n");
-    return -1;
-  }
-
-  if (msg_size == 0 && *msg != NULL) {
-    fprintf(
-        stderr,
-        "verify_circq_send_zc_params - msg_size is zero, msg is not NULL\n");
-    return -1;
-  }
-
-  return 0;
+  return ctcom_success;
 }
 
-int dynmq_send_zc(dynamic_queue* dq, void** msg, uint32_t msg_size) {
+ctcomm_retval_t dynmq_send_zc(dynamic_queue* dq, void** msg,
+                              uint32_t msg_size) {
   if (verify_dynmq_send_zc_params(dq, msg, msg_size) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  pthread_mutex_lock(&dq->mutex);
+  mutex_lock(&dq->mutex);
 
   if (dq->writing_disabled) {
-    pthread_mutex_unlock(&dq->mutex);
-    return -1;
+    mutex_unlock(&dq->mutex);
+    return ctcom_writing_disabled;
   }
 
   msg_size = _sendto_dq(dq, msg, msg_size);
 
-  pthread_mutex_unlock(&dq->mutex);
+  mutex_unlock(&dq->mutex);
 
   return msg_size;
 }
 
-int _recvfrom_dq(dynamic_queue* dq, void** target_buf) {
-  int retval = remove_msg_from_dq_head(dq, target_buf);
+ctcomm_retval_t _recvfrom_dq(dynamic_queue* dq, void** target_buf) {
+  ctcomm_retval_t retval = remove_msg_from_dq_head(dq, target_buf);
 
-  if (retval != -1) {
+  if (retval != ctcom_container_empty) {
     --dq->msg_count;
   }
 
   return retval;
 }
 
-int verify_recvfrom_dq_zc_params(dynamic_queue* dq, void** target_buf) {
-  if (!dq) {
-    fprintf(stderr, "verify_recvfrom_dq_zc_params - dq is NULL\n");
-    return -1;
+ctcomm_retval_t verify_recvfrom_dq_zc_params(dynamic_queue* dq,
+                                             void** target_buf) {
+  if (!dq || !target_buf) {
+    return ctcom_invalid_arguments;
   }
 
-  if (!target_buf) {
-    fprintf(stderr, "verify_recvfrom_dq_zc_params - target_buf is NULL\n");
-    return -1;
-  }
-
-  return 0;
+  return ctcom_success;
 }
 
-int dynmq_recv_zc(dynamic_queue* dq, void** target_buf) {
+ctcomm_retval_t dynmq_recv_zc(dynamic_queue* dq, void** target_buf) {
   if (verify_recvfrom_dq_zc_params(dq, target_buf) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  pthread_mutex_lock(&dq->mutex);
+  mutex_lock(&dq->mutex);
 
   while (dq->msg_count == 0) {
-    pthread_cond_wait(&dq->read_cond, &dq->mutex);
+    cond_var_wait(&dq->read_cond, &dq->mutex);
   }
 
-  int msg_size = _recvfrom_dq(dq, target_buf);
+  ctcomm_retval_t msg_size = _recvfrom_dq(dq, target_buf);
 
-  pthread_mutex_unlock(&dq->mutex);
+  mutex_unlock(&dq->mutex);
 
   return msg_size;
 }
 
-int dynmq_try_recv_zc(dynamic_queue* dq, void** target_buf) {
+ctcomm_retval_t dynmq_try_recv_zc(dynamic_queue* dq, void** target_buf) {
   if (verify_recvfrom_dq_zc_params(dq, target_buf) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  int result = -1;
+  ctcomm_retval_t result = ctcom_container_empty;
 
-  pthread_mutex_lock(&dq->mutex);
+  mutex_lock(&dq->mutex);
 
   if (dq->msg_count > 0) {
     result = _recvfrom_dq(dq, target_buf);
   }
 
-  pthread_mutex_unlock(&dq->mutex);
+  mutex_unlock(&dq->mutex);
 
   return result;
 }
 
-int dynmq_timed_recv_zc(dynamic_queue* dq, void** target_buf,
-                        struct timespec* timeout) {
+ctcomm_retval_t dynmq_timed_recv_zc(dynamic_queue* dq, void** target_buf,
+                                    struct timespec* timeout) {
   if (verify_recvfrom_dq_zc_params(dq, target_buf) != 0) {
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
-  pthread_mutex_lock(&dq->mutex);
+  mutex_lock(&dq->mutex);
 
   if (dq->msg_count == 0) {
     int retval;
@@ -638,51 +643,54 @@ int dynmq_timed_recv_zc(dynamic_queue* dq, void** target_buf,
     add_duration_to_timespec(&abs_time, timeout);
 
     while (dq->msg_count == 0) {
-      if ((retval = pthread_cond_timedwait(&dq->read_cond, &dq->mutex,
-                                           &abs_time)) != 0) {
+      if ((retval = cond_var_timedwait(&dq->read_cond, &dq->mutex,
+                                       &abs_time)) != 0) {
         if (retval != ETIMEDOUT) {
-          fprintf(stderr, "timed_recvfrom_dq failed, retval: %d\n", retval);
+          mutex_unlock(&dq->mutex);
+          return ctcom_unexpected_failure;
         }
-        pthread_mutex_unlock(&dq->mutex);
-        return -1;
+        mutex_unlock(&dq->mutex);
+        return ctcom_timedout;
       }
     }
   }
 
-  int msg_size = _recvfrom_dq(dq, target_buf);
+  ctcomm_retval_t msg_size = _recvfrom_dq(dq, target_buf);
 
-  pthread_mutex_unlock(&dq->mutex);
+  mutex_unlock(&dq->mutex);
 
   return msg_size;
 }
 
-void dynmq_disable_sending(dynamic_queue* dq) {
+ctcomm_retval_t dynmq_disable_sending(dynamic_queue* dq) {
   if (dq) {
-    pthread_mutex_lock(&dq->mutex);
+    mutex_lock(&dq->mutex);
     dq->writing_disabled = true;
-    pthread_mutex_unlock(&dq->mutex);
-  } else {
-    fprintf(stderr, "dynmq_disable_sending - dq is NULL\n");
+    mutex_unlock(&dq->mutex);
+    return ctcom_success;
   }
+
+  return ctcom_invalid_arguments;
 }
 
-void dynmq_enable_sending(dynamic_queue* dq) {
+ctcomm_retval_t dynmq_enable_sending(dynamic_queue* dq) {
   if (dq) {
-    pthread_mutex_lock(&dq->mutex);
+    mutex_lock(&dq->mutex);
     dq->writing_disabled = false;
-    pthread_mutex_unlock(&dq->mutex);
-  } else {
-    fprintf(stderr, "dynmq_disable_sending - dq is NULL\n");
+    mutex_unlock(&dq->mutex);
+    return ctcom_success;
   }
+
+  return ctcom_invalid_arguments;
 }
 
 int dynmq_msg_count(dynamic_queue* dq) {
   int result = -1;
 
   if (dq) {
-    pthread_mutex_lock(&dq->mutex);
+    mutex_lock(&dq->mutex);
     result = dq->msg_count;
-    pthread_mutex_unlock(&dq->mutex);
+    mutex_unlock(&dq->mutex);
   }
 
   return result;
@@ -695,29 +703,33 @@ struct channel {
   circular_queue* workers_to_owner_cq;
 };
 
-channel* channel_create(uint32_t max_size) {
-  channel* ch = (channel*)malloc(sizeof(channel));
+channel* channel_create(uint32_t max_size, char** err_str) {
+  channel* ch = (channel*)mem_alloc(sizeof(channel));
   if (!ch) {
-    fprintf(stderr, "Failed to allocate memory for channel\n");
+    if (err_str) {
+      *err_str = CERR_STR("Failed to allocate memory for channel");
+    }
     return NULL;
   }
 
-  ch->owner_to_workers_cq = circular_queue_create(max_size);
+  ch->owner_to_workers_cq = circular_queue_create(max_size, err_str);
   if (!ch->owner_to_workers_cq) {
-    fprintf(stderr, "Failed to create owner_to_workers_cq\n");
-    free(ch);
+    mem_free(ch);
     return NULL;
   }
 
-  ch->workers_to_owner_cq = circular_queue_create(max_size);
+  ch->workers_to_owner_cq = circular_queue_create(max_size, err_str);
   if (!ch->workers_to_owner_cq) {
-    fprintf(stderr, "Failed to create workers_to_owner_cq\n");
     circular_queue_destroy(ch->owner_to_workers_cq);
-    free(ch);
+    mem_free(ch);
     return NULL;
   }
 
   ch->owner_tid = pthread_self();
+
+  if (err_str) {
+    *err_str = NULL;
+  }
 
   return ch;
 }
@@ -726,14 +738,13 @@ void __channel_destroy(channel* ch) {
   if (ch) {
     circular_queue_destroy(ch->owner_to_workers_cq);
     circular_queue_destroy(ch->workers_to_owner_cq);
-    free(ch);
+    mem_free(ch);
   }
 }
 
 int chan_send_zc(channel* ch, void** msg, uint32_t msg_size) {
   if (!ch) {
-    fprintf(stderr, "sendto_ch was called on a NULL channel\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (pthread_self() == ch->owner_tid) {
@@ -745,8 +756,7 @@ int chan_send_zc(channel* ch, void** msg, uint32_t msg_size) {
 
 int chan_try_send_zc(channel* ch, void** msg, uint32_t msg_size) {
   if (!ch) {
-    fprintf(stderr, "try_sendto_ch was called on a NULL channel\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (pthread_self() == ch->owner_tid) {
@@ -759,8 +769,7 @@ int chan_try_send_zc(channel* ch, void** msg, uint32_t msg_size) {
 int chan_timed_send_zc(channel* ch, void** msg, uint32_t msg_size,
                        struct timespec* timeout) {
   if (!ch) {
-    fprintf(stderr, "timed_sendto_ch was called on a NULL channel\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (pthread_self() == ch->owner_tid) {
@@ -772,8 +781,7 @@ int chan_timed_send_zc(channel* ch, void** msg, uint32_t msg_size,
 
 int chan_recv_zc(channel* ch, void** target_buf) {
   if (!ch) {
-    fprintf(stderr, "recvfrom_ch was called on a NULL channel\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (pthread_self() == ch->owner_tid) {
@@ -785,8 +793,7 @@ int chan_recv_zc(channel* ch, void** target_buf) {
 
 int chan_try_recv_zc(channel* ch, void** target_buf) {
   if (!ch) {
-    fprintf(stderr, "try_recvfrom_ch was called on a NULL channel\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (pthread_self() == ch->owner_tid) {
@@ -799,8 +806,7 @@ int chan_try_recv_zc(channel* ch, void** target_buf) {
 int chan_timed_recv_zc(channel* ch, void** target_buf,
                        struct timespec* timeout) {
   if (!ch) {
-    fprintf(stderr, "timed_recvfrom_ch was called on a NULL channel\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (pthread_self() == ch->owner_tid) {
@@ -812,8 +818,7 @@ int chan_timed_recv_zc(channel* ch, void** target_buf,
 
 int chan_disable_sending(channel* ch, channel_direction d) {
   if (!ch) {
-    fprintf(stderr, "chan_disable_sending - ch is NULL\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (d == owner_to_workers) {
@@ -821,8 +826,7 @@ int chan_disable_sending(channel* ch, channel_direction d) {
   } else if (d == workers_to_owner) {
     circq_disable_sending(ch->workers_to_owner_cq);
   } else {
-    fprintf(stderr, "chan_disable_sending - unknown direction: %d\n", d);
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   return 0;
@@ -830,8 +834,7 @@ int chan_disable_sending(channel* ch, channel_direction d) {
 
 int chan_enable_sending(channel* ch, channel_direction d) {
   if (!ch) {
-    fprintf(stderr, "chan_disable_sending - ch is NULL\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (d == owner_to_workers) {
@@ -839,8 +842,7 @@ int chan_enable_sending(channel* ch, channel_direction d) {
   } else if (d == workers_to_owner) {
     circq_enable_sending(ch->workers_to_owner_cq);
   } else {
-    fprintf(stderr, "chan_enable_sending - unknown direction: %d\n", d);
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   return 0;
@@ -848,8 +850,7 @@ int chan_enable_sending(channel* ch, channel_direction d) {
 
 int chan_msg_count(channel* ch, channel_direction d) {
   if (!ch) {
-    fprintf(stderr, "chan_disable_sending - ch is NULL\n");
-    return -1;
+    return ctcom_invalid_arguments;
   }
 
   if (d == owner_to_workers) {
@@ -858,6 +859,5 @@ int chan_msg_count(channel* ch, channel_direction d) {
     return circq_msg_count(ch->workers_to_owner_cq);
   }
 
-  fprintf(stderr, "chan_msg_count - unknown direction: %d\n", d);
-  return -1;
+  return ctcom_invalid_arguments;
 }
