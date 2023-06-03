@@ -55,8 +55,8 @@ typedef enum ctcomm_retval_t {
   ctcom_invalid_arguments,
   // We failed to create a message
   ctcom_not_enough_memory,
-  // All is good, the operation was a success
-  ctcom_success
+  // Any non-negative value would mean success.
+  ctcom_success_threshold
 } ctcomm_retval_t;
 
 // Circular queue related functions

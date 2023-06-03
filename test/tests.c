@@ -183,10 +183,10 @@ TEST(circular_queues, basic_send_and_receive_NULL_msg) {
   circular_queue* cq = circular_queue_create(3, NULL);
 
   char* m1 = NULL;
-  REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 0), 0);
+  REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 0), ctcom_success_threshold);
   REQUIRE_EQ(m1, NULL);
 
-  REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 16), 0);
+  REQUIRE_EQ(circq_send_zc(cq, (void**)&m1, 16), ctcom_success_threshold);
   REQUIRE_EQ(m1, NULL);
 
   m1 = (char*)malloc(sizeof(char));
@@ -196,10 +196,10 @@ TEST(circular_queues, basic_send_and_receive_NULL_msg) {
   m1 = NULL;
 
   char* m2 = NULL;
-  REQUIRE_EQ(circq_recv_zc(cq, (void**)&m2), 0);
+  REQUIRE_EQ(circq_recv_zc(cq, (void**)&m2), ctcom_success_threshold);
   REQUIRE_EQ(m2, NULL);
 
-  REQUIRE_EQ(circq_recv_zc(cq, (void**)&m2), 0);
+  REQUIRE_EQ(circq_recv_zc(cq, (void**)&m2), ctcom_success_threshold);
   REQUIRE_EQ(m2, NULL);
 
   circular_queue_destroy(cq);
@@ -443,10 +443,10 @@ TEST(dynamic_queues, basic_send_and_receive_NULL_msg) {
   dynamic_queue* dq = dynamic_queue_create(NULL);
 
   char* m1 = NULL;
-  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 0), 0);
+  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 0), ctcom_success_threshold);
   REQUIRE_EQ(m1, NULL);
 
-  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 16), 0);
+  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 16), ctcom_success_threshold);
   REQUIRE_EQ(m1, NULL);
 
   m1 = (char*)malloc(sizeof(char));
@@ -456,16 +456,16 @@ TEST(dynamic_queues, basic_send_and_receive_NULL_msg) {
   m1 = NULL;
 
   char* m2 = NULL;
-  REQUIRE_EQ(dynmq_recv_zc(dq, (void**)&m2), 0);
+  REQUIRE_EQ(dynmq_recv_zc(dq, (void**)&m2), ctcom_success_threshold);
   REQUIRE_EQ(m2, NULL);
 
-  REQUIRE_EQ(dynmq_recv_zc(dq, (void**)&m2), 0);
+  REQUIRE_EQ(dynmq_recv_zc(dq, (void**)&m2), ctcom_success_threshold);
   REQUIRE_EQ(m2, NULL);
 
-  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 16), 0);
+  REQUIRE_EQ(dynmq_send_zc(dq, (void**)&m1, 16), ctcom_success_threshold);
   REQUIRE_EQ(m1, NULL);
 
-  REQUIRE_EQ(dynmq_recv_zc(dq, (void**)&m2), 0);
+  REQUIRE_EQ(dynmq_recv_zc(dq, (void**)&m2), ctcom_success_threshold);
   REQUIRE_EQ(m2, NULL);
 
   dynamic_queue_destroy(dq);

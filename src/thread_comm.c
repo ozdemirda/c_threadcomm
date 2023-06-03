@@ -189,7 +189,7 @@ ctcomm_retval_t verify_circq_send_zc_params(circular_queue* cq, void** msg,
     return ctcom_invalid_arguments;
   }
 
-  return ctcom_success;
+  return ctcom_success_threshold;
 }
 
 int circq_send_zc(circular_queue* cq, void** msg, uint32_t msg_size) {
@@ -300,7 +300,7 @@ int verify_recvfrom_cq_zc_params(circular_queue* cq, void** target_buf) {
     return ctcom_invalid_arguments;
   }
 
-  return ctcom_success;
+  return ctcom_success_threshold;
 }
 
 ctcomm_retval_t circq_recv_zc(circular_queue* cq, void** target_buf) {
@@ -378,7 +378,7 @@ ctcomm_retval_t circq_disable_sending(circular_queue* cq) {
     mutex_lock(&cq->mutex);
     cq->writing_disabled = true;
     mutex_unlock(&cq->mutex);
-    return ctcom_success;
+    return ctcom_success_threshold;
   }
   return ctcom_invalid_arguments;
 }
@@ -388,7 +388,7 @@ ctcomm_retval_t circq_enable_sending(circular_queue* cq) {
     mutex_lock(&cq->mutex);
     cq->writing_disabled = false;
     mutex_unlock(&cq->mutex);
-    return ctcom_success;
+    return ctcom_success_threshold;
   }
   return ctcom_invalid_arguments;
 }
@@ -550,7 +550,7 @@ int verify_dynmq_send_zc_params(dynamic_queue* dq, void** msg,
     return ctcom_invalid_arguments;
   }
 
-  return ctcom_success;
+  return ctcom_success_threshold;
 }
 
 ctcomm_retval_t dynmq_send_zc(dynamic_queue* dq, void** msg,
@@ -589,7 +589,7 @@ ctcomm_retval_t verify_recvfrom_dq_zc_params(dynamic_queue* dq,
     return ctcom_invalid_arguments;
   }
 
-  return ctcom_success;
+  return ctcom_success_threshold;
 }
 
 ctcomm_retval_t dynmq_recv_zc(dynamic_queue* dq, void** target_buf) {
@@ -667,7 +667,7 @@ ctcomm_retval_t dynmq_disable_sending(dynamic_queue* dq) {
     mutex_lock(&dq->mutex);
     dq->writing_disabled = true;
     mutex_unlock(&dq->mutex);
-    return ctcom_success;
+    return ctcom_success_threshold;
   }
 
   return ctcom_invalid_arguments;
@@ -678,7 +678,7 @@ ctcomm_retval_t dynmq_enable_sending(dynamic_queue* dq) {
     mutex_lock(&dq->mutex);
     dq->writing_disabled = false;
     mutex_unlock(&dq->mutex);
-    return ctcom_success;
+    return ctcom_success_threshold;
   }
 
   return ctcom_invalid_arguments;
