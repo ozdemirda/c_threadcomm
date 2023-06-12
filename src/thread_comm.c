@@ -34,17 +34,20 @@ SOFTWARE.
 #define mem_free(ptr) free(ptr)
 
 #define mutex_t pthread_mutex_t
-#define mutex_destroy(m) pthread_mutex_destroy(m)
-#define mutex_init(m, a) pthread_mutex_init(m, a)
-#define mutex_lock(m) pthread_mutex_lock(m)
-#define mutex_unlock(m) pthread_mutex_unlock(m)
+#define mutex_destroy(m) pthread_mutex_destroy(&m)
+#define mutex_init(m) pthread_mutex_init(&m, NULL)
+#define mutex_lock(m) pthread_mutex_lock(&m)
+#define mutex_unlock(m) pthread_mutex_unlock(&m)
 
 #define cond_var_t pthread_cond_t
-#define cond_var_destroy(c) pthread_cond_destroy(c)
-#define cond_var_init(c, a) pthread_cond_init(c, a)
-#define cond_var_wait(c, m) pthread_cond_wait(c, m)
-#define cond_var_timedwait(c, m, t) pthread_cond_timedwait(c, m, t)
-#define cond_var_signal(c) pthread_cond_signal(c)
+#define cond_var_destroy(c) pthread_cond_destroy(&c)
+#define cond_var_init(c) pthread_cond_init(&c, NULL)
+#define cond_var_wait(c, m) pthread_cond_wait(&c, &m)
+#define cond_var_timedwait(c, m, t) pthread_cond_timedwait(&c, &m, &t)
+#define cond_var_signal(c) pthread_cond_signal(&c)
+
+#define thread_id_t pthread_t
+#define get_thread_id pthread_self
 
 #define stringify(s) #s
 #define x_stringify(s) stringify(s)
@@ -133,9 +136,9 @@ circular_queue* circular_queue_create(uint32_t max_size, char** err_str) {
     return NULL;
   }
 
-  mutex_init(&cq->mutex, NULL);
-  cond_var_init(&cq->read_cond, NULL);
-  cond_var_init(&cq->write_cond, NULL);
+  mutex_init(cq->mutex);
+  cond_var_init(cq->read_cond);
+  cond_var_init(cq->write_cond);
   cq->read_index = 0;
   cq->write_index = 0;
   cq->max_size = max_size;
@@ -156,9 +159,9 @@ void __circular_queue_destroy(circular_queue* cq) {
       cq->msg_array = NULL;
     }
 
-    mutex_destroy(&cq->mutex);
-    cond_var_destroy(&cq->read_cond);
-    cond_var_destroy(&cq->write_cond);
+    mutex_destroy(cq->mutex);
+    cond_var_destroy(cq->read_cond);
+    cond_var_destroy(cq->write_cond);
 
     mem_free(cq);
   }
@@ -178,7 +181,7 @@ int _sendto_cq(circular_queue* cq, void** msg, uint32_t msg_size) {
   }
   ++cq->msg_count;
 
-  cond_var_signal(&cq->read_cond);
+  cond_var_signal(cq->read_cond);
 
   return msg_size;
 }
@@ -197,20 +200,20 @@ int circq_send_zc(circular_queue* cq, void** msg, uint32_t msg_size) {
     return ctcom_invalid_arguments;
   }
 
-  mutex_lock(&cq->mutex);
+  mutex_lock(cq->mutex);
 
   if (cq->writing_disabled) {
-    mutex_unlock(&cq->mutex);
+    mutex_unlock(cq->mutex);
     return ctcom_writing_disabled;
   }
 
   while (cq->msg_count == cq->max_size) {
-    cond_var_wait(&cq->write_cond, &cq->mutex);
+    cond_var_wait(cq->write_cond, cq->mutex);
   }
 
   msg_size = _sendto_cq(cq, msg, msg_size);
 
-  mutex_unlock(&cq->mutex);
+  mutex_unlock(cq->mutex);
 
   return msg_size;
 }
@@ -223,10 +226,10 @@ int circq_try_send_zc(circular_queue* cq, void** msg, uint32_t msg_size) {
   // Assuming we won't have space for the new message.
   int result = ctcom_container_full;
 
-  mutex_lock(&cq->mutex);
+  mutex_lock(cq->mutex);
 
   if (cq->writing_disabled) {
-    mutex_unlock(&cq->mutex);
+    mutex_unlock(cq->mutex);
     return ctcom_writing_disabled;
   }
 
@@ -235,7 +238,7 @@ int circq_try_send_zc(circular_queue* cq, void** msg, uint32_t msg_size) {
     result = _sendto_cq(cq, msg, msg_size);
   }
 
-  mutex_unlock(&cq->mutex);
+  mutex_unlock(cq->mutex);
 
   return result;
 }
@@ -246,10 +249,10 @@ int circq_timed_send_zc(circular_queue* cq, void** msg, uint32_t msg_size,
     return ctcom_invalid_arguments;
   }
 
-  mutex_lock(&cq->mutex);
+  mutex_lock(cq->mutex);
 
   if (cq->writing_disabled) {
-    mutex_unlock(&cq->mutex);
+    mutex_unlock(cq->mutex);
     return ctcom_writing_disabled;
   }
 
@@ -260,13 +263,12 @@ int circq_timed_send_zc(circular_queue* cq, void** msg, uint32_t msg_size,
     add_duration_to_timespec(&abs_time, timeout_duration);
 
     while (cq->msg_count == cq->max_size) {
-      if ((retval = cond_var_timedwait(&cq->write_cond, &cq->mutex,
-                                       &abs_time)) != 0) {
+      if ((retval = cond_var_timedwait(cq->write_cond, cq->mutex, abs_time))) {
         if (retval != ETIMEDOUT) {
-          mutex_unlock(&cq->mutex);
+          mutex_unlock(cq->mutex);
           return ctcom_unexpected_failure;
         }
-        mutex_unlock(&cq->mutex);
+        mutex_unlock(cq->mutex);
         return ctcom_timedout;
       }
     }
@@ -274,7 +276,7 @@ int circq_timed_send_zc(circular_queue* cq, void** msg, uint32_t msg_size,
 
   msg_size = _sendto_cq(cq, msg, msg_size);
 
-  mutex_unlock(&cq->mutex);
+  mutex_unlock(cq->mutex);
 
   return msg_size;
 }
@@ -290,7 +292,7 @@ ctcomm_retval_t _recvfrom_cq(circular_queue* cq, void** target_buf) {
 
   --cq->msg_count;
 
-  cond_var_signal(&cq->write_cond);
+  cond_var_signal(cq->write_cond);
 
   return msg_size;
 }
@@ -308,15 +310,15 @@ ctcomm_retval_t circq_recv_zc(circular_queue* cq, void** target_buf) {
     return ctcom_invalid_arguments;
   }
 
-  mutex_lock(&cq->mutex);
+  mutex_lock(cq->mutex);
 
   while (cq->msg_count == 0) {
-    cond_var_wait(&cq->read_cond, &cq->mutex);
+    cond_var_wait(cq->read_cond, cq->mutex);
   }
 
   ctcomm_retval_t msg_size = _recvfrom_cq(cq, target_buf);
 
-  mutex_unlock(&cq->mutex);
+  mutex_unlock(cq->mutex);
 
   return msg_size;
 }
@@ -328,13 +330,13 @@ ctcomm_retval_t circq_try_recv_zc(circular_queue* cq, void** target_buf) {
 
   ctcomm_retval_t result = ctcom_container_empty;
 
-  mutex_lock(&cq->mutex);
+  mutex_lock(cq->mutex);
 
   if (cq->msg_count > 0) {
     result = _recvfrom_cq(cq, target_buf);
   }
 
-  mutex_unlock(&cq->mutex);
+  mutex_unlock(cq->mutex);
 
   return result;
 }
@@ -345,7 +347,7 @@ ctcomm_retval_t circq_timed_recv_zc(circular_queue* cq, void** target_buf,
     return ctcom_invalid_arguments;
   }
 
-  mutex_lock(&cq->mutex);
+  mutex_lock(cq->mutex);
 
   if (cq->msg_count == 0) {
     int retval;
@@ -354,13 +356,12 @@ ctcomm_retval_t circq_timed_recv_zc(circular_queue* cq, void** target_buf,
     add_duration_to_timespec(&abs_time, timeout);
 
     while (cq->msg_count == 0) {
-      if ((retval = cond_var_timedwait(&cq->read_cond, &cq->mutex,
-                                       &abs_time)) != 0) {
+      if ((retval = cond_var_timedwait(cq->read_cond, cq->mutex, abs_time))) {
         if (retval != ETIMEDOUT) {
-          mutex_unlock(&cq->mutex);
+          mutex_unlock(cq->mutex);
           return ctcom_unexpected_failure;
         }
-        mutex_unlock(&cq->mutex);
+        mutex_unlock(cq->mutex);
         return ctcom_timedout;
       }
     }
@@ -368,16 +369,16 @@ ctcomm_retval_t circq_timed_recv_zc(circular_queue* cq, void** target_buf,
 
   ctcomm_retval_t msg_size = _recvfrom_cq(cq, target_buf);
 
-  mutex_unlock(&cq->mutex);
+  mutex_unlock(cq->mutex);
 
   return msg_size;
 }
 
 ctcomm_retval_t circq_disable_sending(circular_queue* cq) {
   if (cq) {
-    mutex_lock(&cq->mutex);
+    mutex_lock(cq->mutex);
     cq->writing_disabled = true;
-    mutex_unlock(&cq->mutex);
+    mutex_unlock(cq->mutex);
     return ctcom_success_threshold;
   }
   return ctcom_invalid_arguments;
@@ -385,9 +386,9 @@ ctcomm_retval_t circq_disable_sending(circular_queue* cq) {
 
 ctcomm_retval_t circq_enable_sending(circular_queue* cq) {
   if (cq) {
-    mutex_lock(&cq->mutex);
+    mutex_lock(cq->mutex);
     cq->writing_disabled = false;
-    mutex_unlock(&cq->mutex);
+    mutex_unlock(cq->mutex);
     return ctcom_success_threshold;
   }
   return ctcom_invalid_arguments;
@@ -397,9 +398,9 @@ int circq_msg_count(circular_queue* cq) {
   int result = -1;
 
   if (cq) {
-    mutex_lock(&cq->mutex);
+    mutex_lock(cq->mutex);
     result = cq->msg_count;
-    mutex_unlock(&cq->mutex);
+    mutex_unlock(cq->mutex);
   }
 
   return result;
@@ -510,8 +511,8 @@ dynamic_queue* dynamic_queue_create(char** err_str) {
     return NULL;
   }
 
-  mutex_init(&dq->mutex, NULL);
-  cond_var_init(&dq->read_cond, NULL);
+  mutex_init(dq->mutex);
+  cond_var_init(dq->read_cond);
   dq->msg_count = 0;
   dq->head = NULL;
   dq->tail = NULL;
@@ -526,8 +527,8 @@ dynamic_queue* dynamic_queue_create(char** err_str) {
 
 void __dynamic_queue_destroy(dynamic_queue* dq) {
   if (dq) {
-    mutex_destroy(&dq->mutex);
-    cond_var_destroy(&dq->read_cond);
+    mutex_destroy(dq->mutex);
+    cond_var_destroy(dq->read_cond);
     destroy_dq_dllist(dq);
     mem_free(dq);
   }
@@ -538,7 +539,7 @@ ctcomm_retval_t _sendto_dq(dynamic_queue* dq, void** msg, uint32_t msg_size) {
 
   if (retval != ctcom_not_enough_memory) {
     ++dq->msg_count;
-    cond_var_signal(&dq->read_cond);
+    cond_var_signal(dq->read_cond);
   }
 
   return retval;
@@ -559,16 +560,16 @@ ctcomm_retval_t dynmq_send_zc(dynamic_queue* dq, void** msg,
     return ctcom_invalid_arguments;
   }
 
-  mutex_lock(&dq->mutex);
+  mutex_lock(dq->mutex);
 
   if (dq->writing_disabled) {
-    mutex_unlock(&dq->mutex);
+    mutex_unlock(dq->mutex);
     return ctcom_writing_disabled;
   }
 
   msg_size = _sendto_dq(dq, msg, msg_size);
 
-  mutex_unlock(&dq->mutex);
+  mutex_unlock(dq->mutex);
 
   return msg_size;
 }
@@ -597,15 +598,15 @@ ctcomm_retval_t dynmq_recv_zc(dynamic_queue* dq, void** target_buf) {
     return ctcom_invalid_arguments;
   }
 
-  mutex_lock(&dq->mutex);
+  mutex_lock(dq->mutex);
 
   while (dq->msg_count == 0) {
-    cond_var_wait(&dq->read_cond, &dq->mutex);
+    cond_var_wait(dq->read_cond, dq->mutex);
   }
 
   ctcomm_retval_t msg_size = _recvfrom_dq(dq, target_buf);
 
-  mutex_unlock(&dq->mutex);
+  mutex_unlock(dq->mutex);
 
   return msg_size;
 }
@@ -617,13 +618,13 @@ ctcomm_retval_t dynmq_try_recv_zc(dynamic_queue* dq, void** target_buf) {
 
   ctcomm_retval_t result = ctcom_container_empty;
 
-  mutex_lock(&dq->mutex);
+  mutex_lock(dq->mutex);
 
   if (dq->msg_count > 0) {
     result = _recvfrom_dq(dq, target_buf);
   }
 
-  mutex_unlock(&dq->mutex);
+  mutex_unlock(dq->mutex);
 
   return result;
 }
@@ -634,7 +635,7 @@ ctcomm_retval_t dynmq_timed_recv_zc(dynamic_queue* dq, void** target_buf,
     return ctcom_invalid_arguments;
   }
 
-  mutex_lock(&dq->mutex);
+  mutex_lock(dq->mutex);
 
   if (dq->msg_count == 0) {
     int retval;
@@ -643,13 +644,12 @@ ctcomm_retval_t dynmq_timed_recv_zc(dynamic_queue* dq, void** target_buf,
     add_duration_to_timespec(&abs_time, timeout);
 
     while (dq->msg_count == 0) {
-      if ((retval = cond_var_timedwait(&dq->read_cond, &dq->mutex,
-                                       &abs_time)) != 0) {
+      if ((retval = cond_var_timedwait(dq->read_cond, dq->mutex, abs_time))) {
         if (retval != ETIMEDOUT) {
-          mutex_unlock(&dq->mutex);
+          mutex_unlock(dq->mutex);
           return ctcom_unexpected_failure;
         }
-        mutex_unlock(&dq->mutex);
+        mutex_unlock(dq->mutex);
         return ctcom_timedout;
       }
     }
@@ -657,16 +657,16 @@ ctcomm_retval_t dynmq_timed_recv_zc(dynamic_queue* dq, void** target_buf,
 
   ctcomm_retval_t msg_size = _recvfrom_dq(dq, target_buf);
 
-  mutex_unlock(&dq->mutex);
+  mutex_unlock(dq->mutex);
 
   return msg_size;
 }
 
 ctcomm_retval_t dynmq_disable_sending(dynamic_queue* dq) {
   if (dq) {
-    mutex_lock(&dq->mutex);
+    mutex_lock(dq->mutex);
     dq->writing_disabled = true;
-    mutex_unlock(&dq->mutex);
+    mutex_unlock(dq->mutex);
     return ctcom_success_threshold;
   }
 
@@ -675,9 +675,9 @@ ctcomm_retval_t dynmq_disable_sending(dynamic_queue* dq) {
 
 ctcomm_retval_t dynmq_enable_sending(dynamic_queue* dq) {
   if (dq) {
-    mutex_lock(&dq->mutex);
+    mutex_lock(dq->mutex);
     dq->writing_disabled = false;
-    mutex_unlock(&dq->mutex);
+    mutex_unlock(dq->mutex);
     return ctcom_success_threshold;
   }
 
@@ -688,9 +688,9 @@ int dynmq_msg_count(dynamic_queue* dq) {
   int result = -1;
 
   if (dq) {
-    mutex_lock(&dq->mutex);
+    mutex_lock(dq->mutex);
     result = dq->msg_count;
-    mutex_unlock(&dq->mutex);
+    mutex_unlock(dq->mutex);
   }
 
   return result;
@@ -698,7 +698,7 @@ int dynmq_msg_count(dynamic_queue* dq) {
 
 // Channel related section starts here.
 struct channel {
-  pthread_t owner_tid;
+  thread_id_t owner_tid;
   circular_queue* owner_to_workers_cq;
   circular_queue* workers_to_owner_cq;
 };
@@ -725,7 +725,7 @@ channel* channel_create(uint32_t max_size, char** err_str) {
     return NULL;
   }
 
-  ch->owner_tid = pthread_self();
+  ch->owner_tid = get_thread_id();
 
   if (err_str) {
     *err_str = NULL;
@@ -747,7 +747,7 @@ int chan_send_zc(channel* ch, void** msg, uint32_t msg_size) {
     return ctcom_invalid_arguments;
   }
 
-  if (pthread_self() == ch->owner_tid) {
+  if (get_thread_id() == ch->owner_tid) {
     return circq_send_zc(ch->owner_to_workers_cq, msg, msg_size);
   }
 
@@ -759,7 +759,7 @@ int chan_try_send_zc(channel* ch, void** msg, uint32_t msg_size) {
     return ctcom_invalid_arguments;
   }
 
-  if (pthread_self() == ch->owner_tid) {
+  if (get_thread_id() == ch->owner_tid) {
     return circq_try_send_zc(ch->owner_to_workers_cq, msg, msg_size);
   }
 
@@ -772,7 +772,7 @@ int chan_timed_send_zc(channel* ch, void** msg, uint32_t msg_size,
     return ctcom_invalid_arguments;
   }
 
-  if (pthread_self() == ch->owner_tid) {
+  if (get_thread_id() == ch->owner_tid) {
     return circq_timed_send_zc(ch->owner_to_workers_cq, msg, msg_size, timeout);
   }
 
@@ -784,7 +784,7 @@ int chan_recv_zc(channel* ch, void** target_buf) {
     return ctcom_invalid_arguments;
   }
 
-  if (pthread_self() == ch->owner_tid) {
+  if (get_thread_id() == ch->owner_tid) {
     return circq_recv_zc(ch->workers_to_owner_cq, target_buf);
   }
 
@@ -796,7 +796,7 @@ int chan_try_recv_zc(channel* ch, void** target_buf) {
     return ctcom_invalid_arguments;
   }
 
-  if (pthread_self() == ch->owner_tid) {
+  if (get_thread_id() == ch->owner_tid) {
     return circq_try_recv_zc(ch->workers_to_owner_cq, target_buf);
   }
 
@@ -809,7 +809,7 @@ int chan_timed_recv_zc(channel* ch, void** target_buf,
     return ctcom_invalid_arguments;
   }
 
-  if (pthread_self() == ch->owner_tid) {
+  if (get_thread_id() == ch->owner_tid) {
     return circq_timed_recv_zc(ch->workers_to_owner_cq, target_buf, timeout);
   }
 
